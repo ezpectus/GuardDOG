@@ -25,15 +25,18 @@ class LLMResult:
 
 
 def _extract_findings(text: str) -> list[dict]:
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end == -1:
-        return []
-    try:
-        data = json.loads(text[start : end + 1])
-    except json.JSONDecodeError:
-        return []
-    items = data.get("findings", data) if isinstance(data, dict) else data
-    return items if isinstance(items, list) else []
+    for open_c, close_c in (("{", "}"), ("[", "]")):
+        start, end = text.find(open_c), text.rfind(close_c)
+        if start == -1 or end == -1:
+            continue
+        try:
+            data = json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            continue
+        items = data.get("findings", data) if isinstance(data, dict) else data
+        if isinstance(items, list):
+            return items
+    return []
 
 
 def _to_findings(raw_items: list[dict]) -> list[Finding]:

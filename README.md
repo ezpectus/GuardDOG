@@ -2,9 +2,9 @@
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Status](https://img.shields.io/badge/status-alpha-orange)]()
-[![Runtime deps](https://img.shields.io/badge/runtime%20deps-zero-brightgreen)]()
-[![CI gate](https://img.shields.io/badge/exit%20code-CI%20ready-red)]()
+![Status](https://img.shields.io/badge/status-alpha-orange)
+![Runtime deps](https://img.shields.io/badge/runtime%20deps-zero-brightgreen)
+![CI gate](https://img.shields.io/badge/exit%20code-CI%20ready-red)
 [![Tests](https://img.shields.io/badge/tests-26%20passed-brightgreen)](tests/)
 
 **Hybrid repository scanner for the AI-generated-code era.** A local layer

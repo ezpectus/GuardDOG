@@ -74,18 +74,19 @@ def render_html(result: ScanResult, template_path: Path) -> str:
     rows = []
     for f in _sorted(result):
         color = SEV_COLORS[f.severity.name]
+        detail = (
+            f"<details><summary>snippet</summary><pre>{html.escape(f.snippet)}</pre></details>"
+            if f.snippet
+            else ""
+        )
         rows.append(
             "<tr>"
             f'<td><span class="sev" style="background:{color}">{f.severity.name}</span></td>'
             f"<td><code>{html.escape(f.rule_id)}</code></td>"
             f"<td><code>{html.escape(f.file)}:{f.line}</code></td>"
-            f"<td>{html.escape(f.message)}"
-            + (
-                f"<details><summary>snippet</summary><pre>{html.escape(f.snippet)}</pre></details>"
-                if f.snippet
-                else ""
-            )
-            + f"</td><td>{html.escape(f.source)}</td></tr>"
+            f"<td>{html.escape(f.message)}{detail}</td>"
+            f"<td>{html.escape(f.source)}</td>"
+            "</tr>"
         )
     cards = "".join(
         f'<div class="card" style="border-top-color:{SEV_COLORS[s.name]}">'

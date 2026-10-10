@@ -170,8 +170,10 @@ def cmd_cache(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     cmds = {"scan", "install-hook", "rules", "cache"}
-    if argv and argv[0] not in cmds and not argv[0].startswith("-"):
-        argv = ["scan"] + argv  # bare `guarddog <path>` shorthand
+    # `guarddog <path>` and `guarddog --flags` both mean `guarddog scan …`;
+    # only -h/--help stays at the top level to list subcommands.
+    if not argv or (argv[0] not in cmds and argv[0] not in ("-h", "--help")):
+        argv = ["scan"] + argv
     args = build_parser().parse_args(argv)
 
     if args.cmd == "install-hook":
