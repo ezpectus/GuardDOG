@@ -71,8 +71,7 @@ GuardDOG/
 ├── templates/
 │   ├── system_prompt.md  # системный промпт аудитора (strict JSON)
 │   └── report.html       # шаблон HTML-дашборда (string.Template)
-├── tests/                # 25 тестов: walker/regex/ast/report/cli/cache/hook
-└── .devin/               # agents-workflow: процесс работы над проектом
+└── tests/                # pytest: walker/regex/ast/report/cli/cache/hook
 ```
 
 ## Использование
@@ -173,8 +172,6 @@ OLD_LINE = "..."           # guarddog: ignore           ← глушит всё 
 - **Verify, don't trust** — каждая находка с file:line, без спекуляций.
 - **Fail-closed** — ошибка сканера видна в отчёте, не проглатывается.
 - **Zero runtime deps** — stdlib only: `ast`, `re`, `urllib`, `argparse`.
-- **Процесс работы** — `.devin/WORKFLOW.md` (adopted agents-workflow kit):
-  маршруты задач, конечный PLAN, вопросы вместо гадания, доска находок.
 
 ## Roadmap
 

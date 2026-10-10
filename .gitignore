@@ -35,3 +35,9 @@ guarddog_report.*
 .env
 .env.*
 !.env.example
+
+# Internal workflow — not for public tracking (lives locally)
+.devin/
+AGENTS.md
+agents-workflow/
+nul
