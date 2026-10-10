@@ -134,19 +134,23 @@ def _check_misc(node: ast.AST, rel: str, lines: list[str], is_test: bool) -> lis
     def f(rule_id: str, sev: Severity, line: int, msg: str) -> Finding:
         return Finding(rule_id, sev, rel, line, msg, lines[line - 1].strip()[:160])
 
-    if (
-        isinstance(node, ast.ExceptHandler)
-        and len(node.body) == 1
-        and isinstance(node.body[0], (ast.Pass, ast.Expr))
-    ):
-        return [
-            f(
-                "silent-except",
-                Severity.MEDIUM,
-                node.lineno,
-                "exception swallowed (pass/ellipsis body)",
-            )
-        ]
+    if isinstance(node, ast.ExceptHandler) and len(node.body) == 1:
+        body = node.body[0]
+        # pass / `...` only — a call (log, record, cleanup) is not silence
+        silent = isinstance(body, ast.Pass) or (
+            isinstance(body, ast.Expr)
+            and isinstance(body.value, ast.Constant)
+            and body.value.value is Ellipsis
+        )
+        if silent:
+            return [
+                f(
+                    "silent-except",
+                    Severity.MEDIUM,
+                    node.lineno,
+                    "exception swallowed (pass/ellipsis body)",
+                )
+            ]
 
     if isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names):
         return [f("star-import", Severity.LOW, node.lineno, f"from {node.module or '?'} import *")]

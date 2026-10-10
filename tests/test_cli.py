@@ -99,6 +99,12 @@ def test_llm_skipped_without_key(tmp_path, monkeypatch):
     assert "skipped" in text
 
 
+def test_selftest_all_green(capsys):
+    assert cli.main(["selftest"]) == 0
+    out = capsys.readouterr().out
+    assert "10/10 components healthy" in out and "FAIL" not in out
+
+
 def test_rules_command(capsys):
     assert cli.main(["rules"]) == 0
     out = capsys.readouterr().out

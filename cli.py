@@ -15,6 +15,7 @@ import os
 import stat
 import sys
 from pathlib import Path
+from typing import Callable
 
 import config as cfgmod
 from parsers.findings import ScanResult, Severity
@@ -73,6 +74,8 @@ def build_parser() -> argparse.ArgumentParser:
     k = sub.add_parser("check", help="dry-run: what would be scanned, LLM payload estimate")
     k.add_argument("target", nargs="?", default=".")
     k.add_argument("--config", type=Path, default=None)
+
+    sub.add_parser("selftest", help="built-in health check — every component, OK/FAIL")
     return p
 
 
@@ -306,6 +309,186 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def _ok(cond: object, msg: str = "") -> None:
+    if not cond:
+        raise AssertionError(msg or "check failed")
+
+
+def _st_rules_table() -> None:
+    from parsers.rules import HINTS, RULES
+
+    _ok(RULES, "empty rule table")
+    ids = [r.rule_id for r in RULES]
+    _ok(len(ids) == len(set(ids)), "duplicate rule ids")
+    missing = [i for i in ids if i not in HINTS]
+    _ok(not missing, f"rules without hints: {missing}")
+
+
+def _st_walker() -> None:
+    import tempfile
+
+    from parsers.walker import iter_source_files
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "keep.py").write_text("x = 1\n", encoding="utf-8")
+        skip = root / "node_modules"
+        skip.mkdir()
+        (skip / "junk.py").write_text("y = 2\n", encoding="utf-8")
+        cfg = cfgmod.load(target=root)
+        seen = [
+            p.name
+            for p in iter_source_files(
+                root,
+                cfg.scan_extensions,
+                cfg.ignore_dirs,
+                cfg.ignore_files,
+                cfg.max_file_size_kb,
+            )
+        ]
+        _ok(seen == ["keep.py"], f"walker saw {seen}")
+
+
+def _st_pipeline() -> None:
+    import tempfile
+
+    from parsers.findings import Severity
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "app.py").write_text(
+            'password = "x12345"\nimport os\nos.system("ls")\n', encoding="utf-8"
+        )
+        cfg = cfgmod.load(target=root)
+        result, _files = _local_scan(root, cfg)
+        got = {f.rule_id for f in result.findings}
+        _ok({"hardcoded-secret", "os-system"} <= got, f"missing {got}")
+        _ok(result.exit_code("critical") == 1)
+        _ok(result.exit_code("never") == 0)
+        _ok(all(f.recommendation for f in result.findings), "missing hints")
+        _ok(Severity.CRITICAL > Severity.HIGH)
+
+
+def _st_dedupe() -> None:
+    from parsers.findings import Finding, ScanResult, Severity
+
+    r = ScanResult(target="t", files_scanned=1)
+    f = Finding("x", Severity.LOW, "a.py", 1, "m")
+    r.add([f])
+    r.add([f])
+    _ok(len(r.findings) == 1, "dedupe broken")
+
+
+def _st_renderers() -> None:
+    import json
+
+    from parsers.findings import Finding, ScanResult, Severity
+
+    r = ScanResult(target="t", files_scanned=1)
+    r.add([Finding("r", Severity.HIGH, "a.py", 1, "m", recommendation="fix it")])
+    for fmt in ("md", "json", "html"):
+        out = render(r, fmt, SCANNER_ROOT / "templates")
+        _ok("fix it" in out, f"{fmt} lost the fix")
+    json.loads(render(r, "json", SCANNER_ROOT / "templates"))
+
+
+def _st_config_merge() -> None:
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / ".guarddog.json").write_text(
+            '{"ignore_dirs": ["custom"], "fail_on": "low"}', encoding="utf-8"
+        )
+        cfg = cfgmod.load(target=root)
+        _ok("custom" in cfg.ignore_dirs and "node_modules" in cfg.ignore_dirs)
+        _ok(cfg.fail_on == "low")
+    with tempfile.TemporaryDirectory() as td2:
+        bad = Path(td2)
+        (bad / ".guarddog.json").write_text("{bad", encoding="utf-8")
+        try:
+            cfgmod.load(target=bad)
+            raised = False
+        except ValueError:
+            raised = True
+        _ok(raised, "malformed config silently accepted")
+
+
+def _st_suppression() -> None:
+    from parsers.regex_scanner import suppressed
+
+    _ok(suppressed("x  # guarddog: ignore", "any"))
+    _ok(suppressed("x  # guarddog: ignore eval-exec", "eval-exec"))
+    _ok(not suppressed("x  # guarddog: ignore eval", "eval-exec"))
+
+
+def _st_cache() -> None:
+    import tempfile
+
+    from llm_client.context import build_llm_context, save_cache
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        f = root / "a.py"
+        f.write_text("x = 1\n", encoding="utf-8")
+        payload, unchanged, cache = build_llm_context(root, [f], 40)
+        _ok(len(payload) == 1 and not unchanged)
+        save_cache(root, cache)
+        payload, unchanged, _ = build_llm_context(root, [f], 40)
+        _ok(not payload and unchanged == ["a.py"], "cache diff broken")
+
+
+def _st_llm_offline() -> None:
+    from llm_client.client import audit
+
+    res = audit("p", [], {"provider": "gemini"})
+    _ok(res.skipped_reason, "empty payload should skip")
+    res = audit("p", [{"path": "a", "content": "b"}], {"provider": "nope"})
+    _ok(res.skipped_reason and "unknown provider" in res.skipped_reason)
+
+
+def _st_threat() -> None:
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "threat_model.md").write_text("RULES", encoding="utf-8")
+        cfg = cfgmod.load(target=root)
+        _ok(_threat_model(root, cfg) == "RULES")
+
+
+SELF_CHECKS: list[tuple[str, Callable[[], None]]] = [
+    ("rules table + hints", _st_rules_table),
+    ("walker + ignores", _st_walker),
+    ("regex+AST pipeline", _st_pipeline),
+    ("finding dedupe", _st_dedupe),
+    ("renderers md/json/html", _st_renderers),
+    ("config merge + malformed", _st_config_merge),
+    ("suppression tokens", _st_suppression),
+    ("llm hash-cache", _st_cache),
+    ("llm skip paths", _st_llm_offline),
+    ("threat model read", _st_threat),
+]
+
+
+def cmd_selftest() -> int:
+    """Runs every core component on embedded fixtures — no network, no key.
+
+    FAIL prints the first error so a broken component is identifiable
+    without a debugger.
+    """
+    fails = 0
+    for name, fn in SELF_CHECKS:
+        try:
+            fn()
+            print(f"OK   {name}")
+        except Exception as exc:
+            fails += 1
+            print(f"FAIL {name}  — {type(exc).__name__}: {exc}")
+    print(f"selftest: {len(SELF_CHECKS) - fails}/{len(SELF_CHECKS)} components healthy")
+    return 1 if fails else 0
+
+
 def cmd_cache(args: argparse.Namespace) -> int:
     from llm_client.context import clear_cache, load_cache
 
@@ -320,7 +503,7 @@ def cmd_cache(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    cmds = {"scan", "install-hook", "rules", "cache", "check"}
+    cmds = {"scan", "install-hook", "rules", "cache", "check", "selftest"}
     # `guarddog <path>` and `guarddog --flags` both mean `guarddog scan …`;
     # only -h/--help stays at the top level to list subcommands.
     if not argv or (argv[0] not in cmds and argv[0] not in ("-h", "--help")):
@@ -335,4 +518,6 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_cache(args)
     if args.cmd == "check":
         return cmd_check(args)
+    if args.cmd == "selftest":
+        return cmd_selftest()
     return cmd_scan(args)

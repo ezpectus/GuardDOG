@@ -154,6 +154,9 @@ python main.py install-hook /path/to/project --fail-on high
 # dry-run: file count + LLM payload/token estimate before spending
 python main.py check /path/to/project
 
+# built-in health check — exercises every component, prints OK/FAIL
+python main.py selftest
+
 # list rules / manage the LLM cache
 python main.py rules
 python main.py cache /path/to/project --clear
