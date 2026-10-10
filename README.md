@@ -31,24 +31,78 @@ local layer still runs. No fake-green, ever.
 
 ## Pipeline
 
+```mermaid
+flowchart TD
+    A[target repo] --> B[WALKER<br/>os.walk + .gitignore<br/>+ ignore rules + size cap]
+    C[config.json<br/>+ .guarddog.json<br/>+ --config] -.-> B
+    C -.-> G
+    B --> D[file list]
+    D --> E[REGEX layer<br/>17 rules, any language]
+    D --> F[AST layer<br/>.py only, ~15 checks]
+    E --> H[(findings)]
+    F --> H
+    D --> G[LLM CONTEXT<br/>SHA-256 vs cache,<br/>key-file priority]
+    G -->|changed files| I[LLM provider<br/>gemini / openai-compat]
+    I -->|strict JSON| H
+    G -->|unchanged| X[(cache hit<br/>skipped)]
+    I -.->|no key / API down| H
+    H --> J[REPORT<br/>md / json / html]
+    J --> K{exit code<br/>findings ≥ fail_on ?}
+    K -->|yes| L[exit 1 → CI fails<br/>commit blocked]
+    K -->|no| M[exit 0 → green]
 ```
-target repo
-    │
-    ▼
-┌─ 1. WALKER ──────────── os.walk + .gitignore + config ignore-rules,
-│        │                 extension allowlist, per-file size cap
-│        ▼
-├─ 2. LOCAL LAYER ──────── 17 regex rules (any language) +
-│        │                 ~15 Python AST checks: hardcoded secrets,
-│        │                 print(secret), eval/exec, shell=True,
-│        │                 verify=False, pickle/yaml.load, os.system…
-│        ▼
-├─ 3. LLM LAYER (opt.) ─── key-file priority → SHA-256 cache →
-│        │                  changed files only → Gemini / OpenAI-compat →
-│        │                  strict-JSON findings merged into the result
-│        ▼
-└─ 4. REPORT + GATE ────── Markdown / JSON / HTML dashboard,
-                           severity matrix, exit code by fail_on threshold
+
+## Data model
+
+```mermaid
+classDiagram
+    class Severity {
+        <<enumeration>>
+        LOW = 1
+        MEDIUM = 2
+        HIGH = 3
+        CRITICAL = 4
+    }
+    class Finding {
+        +str rule_id
+        +Severity severity
+        +str file
+        +int line
+        +str message
+        +str snippet
+        +str source  "local | llm"
+    }
+    class ScanResult {
+        +str target
+        +int files_scanned
+        +list~Finding~ findings
+        +str llm_note
+        +counts() dict
+        +exit_code(fail_on) int
+    }
+    class Rule {
+        +str rule_id
+        +Severity severity
+        +Pattern pattern
+        +str message
+        +bool ast_covered
+    }
+    class Config {
+        +set ignore_dirs
+        +set ignore_files
+        +set scan_extensions
+        +int max_file_size_kb
+        +str fail_on
+        +dict llm
+    }
+    class LLMResult {
+        +list~Finding~ findings
+        +str skipped_reason
+    }
+    ScanResult *-- Finding
+    Rule --> Severity
+    Finding --> Severity
+    LLMResult *-- Finding
 ```
 
 ## Layout
@@ -103,6 +157,63 @@ python main.py cache /path/to/project --clear
 
 **Exit codes:** `0` — clean (below threshold) · `1` — a finding ≥ `fail_on`
 exists · `2` — launch error (missing target, hook exists without `--force`).
+
+## How a scan works — stage by stage
+
+**1. Discovery (`walker.iter_source_files`)**
+Recursive `os.walk` over the target. Every directory/file is tested against,
+in order: `ignore_dirs`/`ignore_files` globs from the merged config → the
+target's own `.gitignore` (plain names, `*.ext` globs, `dir/` entries;
+`!`-negation and anchored paths are a documented limit) → the
+`scan_extensions` allowlist → `max_file_size_kb`. Output: a sorted
+`Path` list — deterministic across runs.
+
+**2. Local analysis (per file, no I/O beyond read)**
+
+- Every file goes through `regex_scanner.scan_regex` — the `RULES` table in
+  `parsers/rules.py` applied line-by-line.
+- `.py` files additionally go through `ast_scanner.scan_ast` — real syntax
+  parsing, so `PASSWORD = "x"` inside a *comment* won't fire but
+  `db_password = "x"` will, with the variable name in the message.
+- Rules marked `ast_covered` are skipped by regex on `.py` — the AST reports
+  them instead. One finding, one layer, no duplicates.
+- A line carrying `# guarddog: ignore` (optionally with a rule id) suppresses
+  findings on that line in both layers.
+- AST parse failure (`SyntaxError`) → file skipped, not a crash.
+
+**3. LLM layer (`cli._llm_scan`, skipped entirely by `--no-llm`)**
+
+- `context.build_llm_context` hashes every scanned file (SHA-256) and diffs
+  against `.guarddog_cache.json` at the target root. Unchanged → out of the
+  payload. Changed files are ordered by `KEY_FILE` priority (models,
+  settings, auth, compose, Dockerfile, requirements…) then capped at
+  `llm.max_files`.
+- `client.audit` dispatches on `llm.provider`: Gemini `generateContent` or
+  OpenAI `/chat/completions` (any compatible endpoint via `base_url`). Both
+  force JSON output and parse it into `Finding(source="llm")`.
+- No key / API error / empty response → `skipped_reason` string lands in the
+  report — visible, not swallowed.
+- The cache file is written **only after a real API response**. A failed or
+  keyless run never gets memoized as "audited".
+
+**4. Report + gate (`report.render`, `ScanResult.exit_code`)**
+
+- `md` — flat table sorted by severity; `json` — machine-readable artifact
+  for CI; `html` — self-contained dashboard (severity cards + collapsible
+  snippets, zero external assets).
+- Default output: `guarddog_report.<fmt>` in the target root; `-o` overrides.
+- `exit_code`: `1` if any finding ≥ `fail_on` threshold (`critical` default),
+  `never` always returns `0`. Pre-commit and CI consume this directly.
+
+## Extending GuardDOG
+
+| Want to… | Touch |
+|---|---|
+| Add a regex rule | one `Rule(...)` line in `parsers/rules.py` |
+| Add a Python AST check | one branch in `ast_scanner._check_call` / `_check_misc` — and set `ast_covered=True` on the twin regex rule if it exists |
+| Add an LLM provider | one function in `llm_client/client.py` + entry in `PROVIDERS` |
+| Add a report format | one renderer in `report.py` + entry in `RENDERERS` |
+| Change defaults | `config.json`; per-repo tweaks → `.guarddog.json` in that repo |
 
 ## Local rules
 
