@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Iterable, Iterator
 
 
-def _load_gitignore_patterns(root: Path) -> list[str]:
+def _load_gitignore_patterns(root: Path) -> list[tuple[str, bool]]:
     gitignore = root / ".gitignore"
     if not gitignore.is_file():
         return []
@@ -22,7 +22,8 @@ def _load_gitignore_patterns(root: Path) -> list[str]:
     for raw in gitignore.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip()
         if line and not line.startswith("#") and not line.startswith("!"):
-            patterns.append(line)
+            # dir-only patterns ("logs/") must not swallow files named "logs"
+            patterns.append((line.rstrip("/"), line.endswith("/")))
     return patterns
 
 
@@ -31,7 +32,7 @@ def _ignored(
     name: str,
     ignore_dirs: Iterable[str],
     ignore_files: Iterable[str],
-    gitignore: list[str],
+    gitignore: list[tuple[str, bool]],
     is_dir: bool,
 ) -> bool:
     rel = rel.replace("\\", "/")
@@ -40,8 +41,9 @@ def _ignored(
         return True
     if not is_dir and any(fnmatch.fnmatch(name, p) for p in ignore_files):
         return True
-    for pat in gitignore:
-        pat = pat.rstrip("/")
+    for pat, dir_only in gitignore:
+        if dir_only and not is_dir:
+            continue
         if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(name, pat):
             return True
     return False

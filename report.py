@@ -42,10 +42,10 @@ def render_markdown(result: ScanResult) -> str:
         "|-----|------|-----------|---------|-----|",
     ]
     for f in _sorted(result):
-        out.append(
-            f"| {f.severity.name} | `{f.rule_id}` | `{f.file}:{f.line}` "
-            f"| {f.message} | {f.recommendation} |"
-        )
+        msg = f.message.replace("|", "\\|")
+        fix = f.recommendation.replace("|", "\\|")
+        loc = f"{f.file}:{f.line}".replace("|", "\\|")
+        out.append(f"| {f.severity.name} | `{f.rule_id}` | `{loc}` | {msg} | {fix} |")
     out.append("")
     return "\n".join(out)
 

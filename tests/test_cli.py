@@ -176,6 +176,29 @@ def test_report_has_fix_column(tmp_path):
     assert "| Fix |" in text and "secrets manager" in text
 
 
+def test_bad_fail_on_in_config_exits_2(tmp_path):
+    (tmp_path / "x.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / ".guarddog.json").write_text(json.dumps({"fail_on": "banana"}), encoding="utf-8")
+    assert cli.main(["scan", str(tmp_path), "--no-llm", "--quiet"]) == 2
+
+
+def test_malformed_config_exits_2_not_traceback(tmp_path, capsys):
+    (tmp_path / "x.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / ".guarddog.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(SystemExit) as e:
+        cli.main(["scan", str(tmp_path), "--no-llm", "--quiet"])
+    assert e.value.code == 2
+    assert "bad config" in capsys.readouterr().err
+
+
+def test_suppression_is_token_not_substring(tmp_path):
+    from parsers.regex_scanner import suppressed
+
+    assert suppressed("x  # guarddog: ignore eval", "eval")
+    assert not suppressed("x  # guarddog: ignore eval", "eval-exec")
+    assert suppressed("x  # guarddog: ignore eval-exec,os-system", "os-system")
+
+
 @pytest.mark.skipif(not shutil.which("git"), reason="git not installed")
 def test_staged_mode_scans_only_staged(tmp_path):
     import subprocess
@@ -191,3 +214,18 @@ def test_staged_mode_scans_only_staged(tmp_path):
     # stage the vulnerable file -> critical hits the gate
     subprocess.run(["git", "add", "vuln.py"], cwd=tmp_path, check=True)
     assert cli.main(["scan", str(tmp_path), "--staged", "--no-llm", "--quiet"]) == 1
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git not installed")
+def test_staged_mode_from_subdirectory(tmp_path):
+    """git reports repo-root-relative paths; target=subdir must still match."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    sub = tmp_path / "pkg"
+    sub.mkdir()
+    (sub / "vuln.py").write_text('token = "abc12345"\n', encoding="utf-8")
+    (tmp_path / "clean.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    # scanning the SUBDIR staged must see pkg/vuln.py (repo-relative path)
+    assert cli.main(["scan", str(sub), "--staged", "--no-llm", "--quiet"]) == 1

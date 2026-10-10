@@ -64,17 +64,27 @@ def _merge(base: dict, override: dict) -> dict:
     return out
 
 
+def _read_json(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ValueError(f"bad config file {path}: {exc}") from None
+    if not isinstance(data, dict):
+        raise ValueError(f"bad config file {path}: top level must be an object")
+    return data
+
+
 def load(target: Path | None = None, explicit: Path | None = None) -> Config:
     data: dict = {}
     default_file = SCANNER_ROOT / "config.json"
     if default_file.is_file():
-        data = _merge(data, json.loads(default_file.read_text(encoding="utf-8")))
+        data = _merge(data, _read_json(default_file))
     if target is not None:
         target_file = target / TARGET_CONFIG_NAME
         if target_file.is_file():
-            data = _merge(data, json.loads(target_file.read_text(encoding="utf-8")))
+            data = _merge(data, _read_json(target_file))
     if explicit is not None and explicit.is_file():
-        data = _merge(data, json.loads(explicit.read_text(encoding="utf-8")))
+        data = _merge(data, _read_json(explicit))
     unknown = sorted(set(data) - KNOWN_KEYS)
     if unknown:
         print(

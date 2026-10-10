@@ -15,7 +15,10 @@ class Severity(IntEnum):
 
     @classmethod
     def from_name(cls, name: str) -> "Severity":
-        return cls[name.strip().upper()]
+        try:
+            return cls[name.strip().upper()]
+        except KeyError:
+            raise ValueError(f"unknown severity: {name!r}") from None
 
 
 @dataclass(frozen=True)
@@ -36,15 +39,18 @@ class ScanResult:
     files_scanned: int
     findings: list[Finding] = field(default_factory=list)
     llm_note: str | None = None
+    _seen: set[tuple[str, int, str]] = field(default_factory=set, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        self._seen = {(f.file, f.line, f.rule_id) for f in self.findings}
 
     def add(self, new: Iterable[Finding]) -> None:
         """Merge findings, deduped by (file, line, rule_id) — the local and
         LLM layers can legitimately hit the same line; report stays clean."""
-        seen = {(f.file, f.line, f.rule_id) for f in self.findings}
         for f in new:
             key = (f.file, f.line, f.rule_id)
-            if key not in seen:
-                seen.add(key)
+            if key not in self._seen:
+                self._seen.add(key)
                 self.findings.append(f)
 
     def counts(self) -> dict[str, int]:

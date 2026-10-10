@@ -6,6 +6,7 @@ with real syntax context instead of raw text matching.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from .findings import Finding
@@ -18,7 +19,8 @@ def suppressed(line: str, rule_id: str) -> bool:
     if SUPPRESS_MARK not in line:
         return False
     tail = line.split(SUPPRESS_MARK, 1)[1].strip()
-    return not tail or rule_id in tail
+    # token match, not substring: `ignore eval` must not kill `eval-exec`
+    return not tail or rule_id in re.split(r"[\s,]+", tail)
 
 
 def scan_regex(path: Path, rel: str, text: str) -> list[Finding]:
