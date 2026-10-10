@@ -11,6 +11,7 @@ import os
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 from parsers.findings import Finding, Severity
 
@@ -24,7 +25,7 @@ class LLMResult:
     skipped_reason: str | None = None
 
 
-def _extract_findings(text: str) -> list[dict]:
+def _extract_findings(text: str) -> list[Any]:
     for open_c, close_c in (("{", "}"), ("[", "]")):
         start, end = text.find(open_c), text.rfind(close_c)
         if start == -1 or end == -1:
@@ -39,9 +40,11 @@ def _extract_findings(text: str) -> list[dict]:
     return []
 
 
-def _to_findings(raw_items: list[dict]) -> list[Finding]:
+def _to_findings(raw_items: list[Any]) -> list[Finding]:
     findings: list[Finding] = []
     for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
         try:
             findings.append(
                 Finding(
@@ -60,21 +63,21 @@ def _to_findings(raw_items: list[dict]) -> list[Finding]:
     return findings
 
 
-def _files_blob(payload: list[dict]) -> str:
+def _files_blob(payload: list[dict[str, str]]) -> str:
     return "\n\n".join(f"### FILE: {f['path']}\n```\n{f['content']}\n```" for f in payload)
 
 
-def _post(url: str, body: dict, headers: dict, timeout: int) -> dict:
+def _post(url: str, body: dict[str, Any], headers: dict[str, str], timeout: int) -> dict[str, Any]:
     req = urllib.request.Request(
         url,
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json", **headers},
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read())
+        return cast(dict[str, Any], json.loads(resp.read()))
 
 
-def _audit_gemini(prompt: str, payload: list[dict], cfg: dict) -> LLMResult:
+def _audit_gemini(prompt: str, payload: list[dict[str, str]], cfg: dict[str, Any]) -> LLMResult:
     key = os.environ.get("GUARDDOG_API_KEY") or os.environ.get("GEMINI_API_KEY")
     if not key:
         return LLMResult([], skipped_reason="no GUARDDOG_API_KEY/GEMINI_API_KEY set")
@@ -94,7 +97,7 @@ def _audit_gemini(prompt: str, payload: list[dict], cfg: dict) -> LLMResult:
     return LLMResult(_to_findings(_extract_findings(text)))
 
 
-def _audit_openai(prompt: str, payload: list[dict], cfg: dict) -> LLMResult:
+def _audit_openai(prompt: str, payload: list[dict[str, str]], cfg: dict[str, Any]) -> LLMResult:
     key = os.environ.get("GUARDDOG_API_KEY") or os.environ.get("OPENAI_API_KEY")
     if not key:
         return LLMResult([], skipped_reason="no GUARDDOG_API_KEY/OPENAI_API_KEY set")
@@ -120,7 +123,7 @@ def _audit_openai(prompt: str, payload: list[dict], cfg: dict) -> LLMResult:
 PROVIDERS = {"gemini": _audit_gemini, "openai": _audit_openai}
 
 
-def audit(prompt: str, payload: list[dict], cfg: dict) -> LLMResult:
+def audit(prompt: str, payload: list[dict[str, str]], cfg: dict[str, Any]) -> LLMResult:
     if not payload:
         return LLMResult([], skipped_reason="no changed files (cache hit)")
     provider = str(cfg.get("provider", "gemini")).lower()

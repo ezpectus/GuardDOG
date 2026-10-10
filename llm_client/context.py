@@ -33,9 +33,12 @@ def load_cache(root: Path) -> dict[str, str]:
     if not path.is_file():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): str(v) for k, v in data.items()}
 
 
 def save_cache(root: Path, cache: dict[str, str]) -> None:
@@ -56,7 +59,7 @@ def _priority(rel: str) -> tuple[int, str]:
 
 def build_llm_context(
     root: Path, files: list[Path], max_files: int
-) -> tuple[list[dict], list[str], dict[str, str]]:
+) -> tuple[list[dict[str, str]], list[str], dict[str, str]]:
     """Return (payload, skipped-unchanged, updated cache)."""
     cache = load_cache(root)
     entries: list[tuple[Path, str, bytes]] = []

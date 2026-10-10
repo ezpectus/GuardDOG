@@ -76,12 +76,22 @@ def _check_call(node: ast.Call, rel: str, lines: list[str]) -> list[Finding]:
         return [f("eval-exec", Severity.HIGH, f"{name}() on dynamic input")]
     if name == "print":
         for arg in node.args:
-            if isinstance(arg, ast.Name) and SECRET_NAME.search(arg.id):
-                return [f("print-secret", Severity.CRITICAL, f"print() leaks `{arg.id}`")]
+            leaked = (
+                arg.id
+                if isinstance(arg, ast.Name)
+                else arg.attr
+                if isinstance(arg, ast.Attribute)
+                else ""
+            )
+            if leaked and SECRET_NAME.search(leaked):
+                return [f("print-secret", Severity.CRITICAL, f"print() leaks `{leaked}`")]
         return []
     if name == "os.system":
         return [f("os-system", Severity.HIGH, "os.system() — shell injection surface")]
-    if name.startswith(("subprocess.", "os.popen")) and _kw_true(node, "shell"):
+    if name == "os.popen":
+        # os.popen has no shell= kwarg — it is always a shell
+        return [f("os-system", Severity.HIGH, "os.popen() — shell injection surface")]
+    if name.startswith("subprocess.") and _kw_true(node, "shell"):
         return [f("shell-true", Severity.HIGH, "subprocess invoked with shell enabled")]
     if _kw_false(node, "verify"):
         return [f("verify-false", Severity.HIGH, "TLS certificate verification disabled")]

@@ -150,7 +150,7 @@ def _threat_model(target: Path, cfg: cfgmod.Config) -> str:
     locations inside the scanned repo.
     """
     explicit = cfg.llm.get("threat_model")
-    candidates = (
+    candidates: list[Path] = (
         [target / explicit]
         if explicit
         else [

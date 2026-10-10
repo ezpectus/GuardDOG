@@ -12,7 +12,7 @@ license = { text = "MIT" }
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "ruff>=0.1"]
+dev = ["pytest>=7", "ruff>=0.1", "mypy>=1.8"]
 
 [project.scripts]
 guarddog = "cli:main"
@@ -30,3 +30,14 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+mypy_path = "."
+
+# test files import as top-level modules (tests/ has no __init__.py)
+[[tool.mypy.overrides]]
+module = ["test_cli", "test_report", "test_scanners", "conftest"]
+disallow_untyped_defs = false
+disallow_untyped_calls = false

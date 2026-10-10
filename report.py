@@ -8,7 +8,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from string import Template
 
-from parsers.findings import ScanResult, Severity
+from typing import Callable
+
+from parsers.findings import Finding, ScanResult, Severity
 
 SEV_ORDER = (Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW)
 SEV_COLORS = {
@@ -19,7 +21,7 @@ SEV_COLORS = {
 }
 
 
-def _sorted(result: ScanResult):
+def _sorted(result: ScanResult) -> list[Finding]:
     return sorted(result.findings, key=lambda x: (-x.severity, x.file, x.line))
 
 
@@ -116,7 +118,10 @@ def render_html(result: ScanResult, template_path: Path) -> str:
     )
 
 
-RENDERERS = {"md": render_markdown, "json": render_json, "html": render_html}
+RENDERERS: dict[str, Callable[[ScanResult], str]] = {
+    "md": render_markdown,
+    "json": render_json,
+}
 
 
 def render(result: ScanResult, fmt: str, templates_dir: Path) -> str:

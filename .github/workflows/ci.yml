@@ -19,6 +19,7 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check .
       - run: ruff format --check .
+      - run: mypy .
       - run: pytest tests/ -q
       # self-scan: the dog must not bark at itself
       - run: python main.py scan . --no-llm --quiet --fail-on never -o /tmp/self_report.md

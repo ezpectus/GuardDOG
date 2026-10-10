@@ -10,6 +10,7 @@ import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 SCANNER_ROOT = Path(__file__).resolve().parent
 TARGET_CONFIG_NAME = ".guarddog.json"
@@ -25,7 +26,7 @@ KNOWN_KEYS = {
 
 @dataclass
 class Config:
-    data: dict = field(default_factory=dict)
+    data: dict[str, Any] = field(default_factory=dict)
 
     @property
     def ignore_dirs(self) -> set[str]:
@@ -48,11 +49,12 @@ class Config:
         return str(self.data.get("fail_on", "critical"))
 
     @property
-    def llm(self) -> dict:
-        return dict(self.data.get("llm", {}))
+    def llm(self) -> dict[str, Any]:
+        raw = self.data.get("llm", {})
+        return dict(raw) if isinstance(raw, dict) else {}
 
 
-def _merge(base: dict, override: dict) -> dict:
+def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     out = dict(base)
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(out.get(key), dict):
@@ -64,7 +66,7 @@ def _merge(base: dict, override: dict) -> dict:
     return out
 
 
-def _read_json(path: Path) -> dict:
+def _read_json(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
@@ -75,7 +77,7 @@ def _read_json(path: Path) -> dict:
 
 
 def load(target: Path | None = None, explicit: Path | None = None) -> Config:
-    data: dict = {}
+    data: dict[str, Any] = {}
     default_file = SCANNER_ROOT / "config.json"
     if default_file.is_file():
         data = _merge(data, _read_json(default_file))

@@ -15,7 +15,7 @@ from parsers.findings import Severity
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _plant(root: Path):
+def _plant(root: Path) -> None:
     (root / "app.py").write_text(
         'db_password = "s3cret"\nprint(db_password)\nimport os\nos.system("ls")\n',
         encoding="utf-8",

@@ -87,7 +87,8 @@ RULES: list[Rule] = [
     Rule(
         "yaml-load-unsafe",
         Severity.HIGH,
-        re.compile(r"\byaml\.load\s*\([^)]*\)(?![^\n]*SafeLoader)"),
+        # SafeLoader lives inside the parens — check args, not after the call
+        re.compile(r"\byaml\.load\s*\((?![^)]*\bLoader\b)"),
         "yaml.load without SafeLoader",
         ast_covered=True,
     ),

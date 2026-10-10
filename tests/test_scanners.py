@@ -115,12 +115,35 @@ def test_ast_silent_except(tmp_path):
 
 def test_ast_assert_skipped_in_tests(tmp_path):
     src = "def f():\n    assert x\n"
-    assert any(f.rule_id == "assert-in-prod" for f in scan_ast(None, "app.py", src))
-    assert not any(f.rule_id == "assert-in-prod" for f in scan_ast(None, "tests/test_a.py", src))
+    assert any(f.rule_id == "assert-in-prod" for f in scan_ast(tmp_path, "app.py", src))
+    assert not any(
+        f.rule_id == "assert-in-prod" for f in scan_ast(tmp_path, "tests/test_a.py", src)
+    )
 
 
 def test_ast_syntax_error_is_clean(tmp_path):
-    assert scan_ast(None, "broken.py", "def (:\n") == []
+    assert scan_ast(tmp_path, "broken.py", "def (:\n") == []
+
+
+def test_ast_os_popen_flagged(tmp_path):
+    src = "import os\nos.popen(cmd)\n"
+    p = _write(tmp_path, "x.py", src)
+    assert any(f.rule_id == "os-system" for f in scan_ast(p, "x.py", src))
+
+
+def test_ast_print_attribute_secret(tmp_path):
+    src = "print(self.api_key)\n"
+    p = _write(tmp_path, "x.py", src)
+    assert any(f.rule_id == "print-secret" for f in scan_ast(p, "x.py", src))
+
+
+def test_yaml_safeloader_not_flagged(tmp_path):
+    # regex must check args inside the parens, not after the call
+    src = "yaml.load(stream, Loader=SafeLoader)\n"
+    p = _write(tmp_path, "x.yaml", src)
+    assert not any(f.rule_id == "yaml-load-unsafe" for f in scan_regex(p, "x.yaml", src))
+    bad = "yaml.load(stream)\n"
+    assert any(f.rule_id == "yaml-load-unsafe" for f in scan_regex(p, "x.yaml", bad))
 
 
 def test_suppression_marker(tmp_path):
