@@ -2,11 +2,15 @@
 
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
+import pytest
+
 import cli
 from llm_client.context import build_llm_context, save_cache
+from parsers.findings import Severity
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -99,3 +103,40 @@ def test_rules_command(capsys):
     assert cli.main(["rules"]) == 0
     out = capsys.readouterr().out
     assert "hardcoded-secret" in out and "CRITICAL" in out
+
+
+def test_findings_deduped_on_merge(tmp_path):
+    from parsers.findings import Finding, ScanResult
+
+    r = ScanResult(target=str(tmp_path), files_scanned=1)
+    f = Finding("hardcoded-secret", Severity.CRITICAL, "a.py", 1, "x")
+    r.add([f])
+    r.add([f, Finding("hardcoded-secret", Severity.CRITICAL, "a.py", 1, "y")])
+    r.add([Finding("hardcoded-secret", Severity.CRITICAL, "a.py", 2, "z")])
+    assert len(r.findings) == 2
+
+
+def test_unknown_config_key_warns(tmp_path, capsys):
+    (tmp_path / "x.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / ".guarddog.json").write_text(
+        json.dumps({"ignore_dirz": ["x"], "fail_on": "never"}), encoding="utf-8"
+    )
+    cli.main(["scan", str(tmp_path), "--no-llm", "--quiet"])
+    assert "ignore_dirz" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="git not installed")
+def test_staged_mode_scans_only_staged(tmp_path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "vuln.py").write_text('token = "abc12345"\n', encoding="utf-8")
+    (tmp_path / "clean.py").write_text("x = 1\n", encoding="utf-8")
+    # nothing staged -> clean
+    assert cli.main(["scan", str(tmp_path), "--staged", "--no-llm", "--quiet"]) == 0
+    # stage only the clean file -> still clean
+    subprocess.run(["git", "add", "clean.py"], cwd=tmp_path, check=True)
+    assert cli.main(["scan", str(tmp_path), "--staged", "--no-llm", "--quiet"]) == 0
+    # stage the vulnerable file -> critical hits the gate
+    subprocess.run(["git", "add", "vuln.py"], cwd=tmp_path, check=True)
+    assert cli.main(["scan", str(tmp_path), "--staged", "--no-llm", "--quiet"]) == 1

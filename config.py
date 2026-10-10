@@ -7,11 +7,20 @@ sane if config.json is deleted.
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 SCANNER_ROOT = Path(__file__).resolve().parent
 TARGET_CONFIG_NAME = ".guarddog.json"
+KNOWN_KEYS = {
+    "ignore_dirs",
+    "ignore_files",
+    "scan_extensions",
+    "max_file_size_kb",
+    "fail_on",
+    "llm",
+}
 
 
 @dataclass
@@ -66,4 +75,10 @@ def load(target: Path | None = None, explicit: Path | None = None) -> Config:
             data = _merge(data, json.loads(target_file.read_text(encoding="utf-8")))
     if explicit is not None and explicit.is_file():
         data = _merge(data, json.loads(explicit.read_text(encoding="utf-8")))
+    unknown = sorted(set(data) - KNOWN_KEYS)
+    if unknown:
+        print(
+            f"guarddog: unknown config keys ignored: {', '.join(unknown)}",
+            file=sys.stderr,
+        )
     return Config(data)

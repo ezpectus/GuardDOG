@@ -16,17 +16,17 @@ import sys
 from pathlib import Path
 
 import config as cfgmod
-from parsers.ast_scanner import scan_ast
 from parsers.findings import ScanResult
-from parsers.regex_scanner import scan_regex
 from parsers.rules import RULES
+from parsers.scanners import SCANNERS
 from parsers.walker import iter_source_files
 from report import render
 
 SCANNER_ROOT = Path(__file__).resolve().parent
 HOOK_TEMPLATE = """#!/bin/sh
 # GuardDOG pre-commit hook — blocks commits with findings >= threshold
-python "{scanner}/main.py" scan . --no-llm --fail-on {fail_on} --format md -o .guarddog_report.md
+# Scans staged files only; falls back to full scan outside a git repo.
+python "{scanner}/main.py" scan . --staged --no-llm --fail-on {fail_on} --format md -o .guarddog_report.md
 """
 
 
@@ -42,6 +42,11 @@ def _scan_parser(p: argparse.ArgumentParser) -> None:
     p.add_argument("--format", dest="fmt", default="md", choices=["md", "json", "html"])
     p.add_argument("-o", "--out", type=Path, default=None)
     p.add_argument("--quiet", action="store_true", help="no stdout report dump")
+    p.add_argument(
+        "--staged",
+        action="store_true",
+        help="scan git-staged files only (pre-commit mode)",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -66,16 +71,41 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _local_scan(target: Path, cfg: cfgmod.Config) -> tuple[ScanResult, list[Path]]:
-    files = list(
-        iter_source_files(
+def _staged_relpaths(target: Path) -> set[str] | None:
+    """git diff --cached paths, or None when not a repo / no git."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("git") or not (target / ".git").is_dir():
+        return None
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(target), "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0:
+        return None
+    return {ln.strip().replace("\\", "/") for ln in out.stdout.splitlines() if ln.strip()}
+
+
+def _local_scan(
+    target: Path, cfg: cfgmod.Config, only: set[str] | None = None
+) -> tuple[ScanResult, list[Path]]:
+    files = [
+        p
+        for p in iter_source_files(
             target,
             extensions=cfg.scan_extensions,
             ignore_dirs=cfg.ignore_dirs,
             ignore_files=cfg.ignore_files,
             max_size_kb=cfg.max_file_size_kb,
         )
-    )
+        if only is None or p.relative_to(target).as_posix() in only
+    ]
     result = ScanResult(target=str(target), files_scanned=len(files))
     for path in files:
         rel = path.relative_to(target).as_posix()
@@ -83,9 +113,9 @@ def _local_scan(target: Path, cfg: cfgmod.Config) -> tuple[ScanResult, list[Path
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        result.findings.extend(scan_regex(path, rel, text))
-        if path.suffix.lower() == ".py":
-            result.findings.extend(scan_ast(path, rel, text))
+        for applies, scan in SCANNERS:
+            if applies(path):
+                result.add(scan(path, rel, text))
     return result, files
 
 
@@ -103,7 +133,7 @@ def _llm_scan(target: Path, files: list[Path], cfg: cfgmod.Config, result: ScanR
     res = audit(prompt, payload, llm_cfg)
     if res.skipped_reason is None:
         save_cache(target, new_cache)  # commit cache only on real response
-        result.findings.extend(res.findings)
+        result.add(res.findings)
         return f"audited {len(payload)} files ({len(unchanged)} unchanged/cached)"
     return f"skipped — {res.skipped_reason} ({len(unchanged)} cached)"
 
@@ -114,7 +144,14 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print(f"guarddog: target not found: {target}", file=sys.stderr)
         return 2
     cfg = cfgmod.load(target=target, explicit=args.config)
-    result, files = _local_scan(target, cfg)
+    only = None
+    if args.staged:
+        only = _staged_relpaths(target)
+        if only is None:
+            print("guarddog: not a git repo / no git — full scan instead", file=sys.stderr)
+        elif not only:
+            print("guarddog: nothing staged — nothing to scan", file=sys.stderr)
+    result, files = _local_scan(target, cfg, only=only)
     if not args.no_llm:
         result.llm_note = _llm_scan(target, files, cfg, result)
 

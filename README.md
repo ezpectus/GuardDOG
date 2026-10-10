@@ -132,8 +132,11 @@ GuardDOG/
 ## Usage
 
 ```bash
-# local layer only (offline, CI, pre-commit)
+# local layer only (offline, CI)
 python main.py scan /path/to/project --no-llm
+
+# pre-commit mode: scan only git-staged files
+python main.py scan . --staged --no-llm --fail-on high
 
 # full hybrid
 export GUARDDOG_API_KEY=<gemini key>      # or OPENAI_API_KEY
@@ -211,9 +214,15 @@ target's own `.gitignore` (plain names, `*.ext` globs, `dir/` entries;
 |---|---|
 | Add a regex rule | one `Rule(...)` line in `parsers/rules.py` |
 | Add a Python AST check | one branch in `ast_scanner._check_call` / `_check_misc` — and set `ast_covered=True` on the twin regex rule if it exists |
+| Add a whole scanner layer | one `(applies_to, scan)` pair in `parsers/scanners.py` |
 | Add an LLM provider | one function in `llm_client/client.py` + entry in `PROVIDERS` |
 | Add a report format | one renderer in `report.py` + entry in `RENDERERS` |
 | Change defaults | `config.json`; per-repo tweaks → `.guarddog.json` in that repo |
+
+Unknown top-level keys in any config file produce a stderr warning — a
+typo can't silently disable `ignore_dirs`. Findings from the local and LLM
+layers merge through `ScanResult.add()` and are deduplicated by
+(file, line, rule_id).
 
 ## Local rules
 

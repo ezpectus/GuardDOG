@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
+from typing import Iterable
 
 
 class Severity(IntEnum):
@@ -34,6 +35,16 @@ class ScanResult:
     files_scanned: int
     findings: list[Finding] = field(default_factory=list)
     llm_note: str | None = None
+
+    def add(self, new: Iterable[Finding]) -> None:
+        """Merge findings, deduped by (file, line, rule_id) — the local and
+        LLM layers can legitimately hit the same line; report stays clean."""
+        seen = {(f.file, f.line, f.rule_id) for f in self.findings}
+        for f in new:
+            key = (f.file, f.line, f.rule_id)
+            if key not in seen:
+                seen.add(key)
+                self.findings.append(f)
 
     def counts(self) -> dict[str, int]:
         counts = {
