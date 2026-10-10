@@ -1,7 +1,7 @@
-"""LLM audit client — Gemini REST (stdlib urllib, no SDK dependency).
+"""LLM audit clients — Gemini and OpenAI-compatible REST (stdlib urllib only).
 
-Set GUARDDOG_API_KEY (or GEMINI_API_KEY). Without a key the LLM layer is
-skipped and the report says so — never silently, never a fake verdict.
+Key lookup order: GUARDDOG_API_KEY → provider-specific env. Without a key
+the layer is skipped with a reason in the report — never silently.
 """
 
 from __future__ import annotations
@@ -14,7 +14,8 @@ from pathlib import Path
 
 from parsers.findings import Finding, Severity
 
-API_URL = "https://generativelanguage.googleapis.com/v1beta/models/" "{model}:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
 
 @dataclass
@@ -23,57 +24,21 @@ class LLMResult:
     skipped_reason: str | None = None
 
 
-def _extract_json(text: str) -> list[dict]:
-    start, end = text.find("["), text.rfind("]")
-    if start == -1 or end == -1:
-        start, end = text.find("{"), text.rfind("}")
+def _extract_findings(text: str) -> list[dict]:
+    start, end = text.find("{"), text.rfind("}")
     if start == -1 or end == -1:
         return []
     try:
         data = json.loads(text[start : end + 1])
     except json.JSONDecodeError:
         return []
-    if isinstance(data, dict):
-        data = data.get("findings", [])
-    return data if isinstance(data, list) else []
+    items = data.get("findings", data) if isinstance(data, dict) else data
+    return items if isinstance(items, list) else []
 
 
-def audit_with_gemini(
-    system_prompt: str, payload: list[dict], model: str = "gemini-2.0-flash", timeout: int = 60
-) -> LLMResult:
-    key = os.environ.get("GUARDDOG_API_KEY") or os.environ.get("GEMINI_API_KEY")
-    if not key:
-        return LLMResult([], skipped_reason="no GUARDDOG_API_KEY/GEMINI_API_KEY set")
-    if not payload:
-        return LLMResult([], skipped_reason="no changed files (cache hit)")
-
-    files_blob = "\n\n".join(f"### FILE: {f['path']}\n```\n{f['content']}\n```" for f in payload)
-    body = json.dumps(
-        {
-            "system_instruction": {"parts": [{"text": system_prompt}]},
-            "contents": [{"parts": [{"text": files_blob}]}],
-            "generationConfig": {"response_mime_type": "application/json"},
-        }
-    ).encode()
-
-    req = urllib.request.Request(
-        f"{API_URL.format(model=model)}?key={key}",
-        data=body,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read())
-    except Exception as exc:  # network/API failure must not crash the scan
-        return LLMResult([], skipped_reason=f"LLM request failed: {exc}")
-
-    try:
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError, TypeError):
-        return LLMResult([], skipped_reason="empty LLM response")
-
+def _to_findings(raw_items: list[dict]) -> list[Finding]:
     findings: list[Finding] = []
-    for raw in _extract_json(text):
+    for raw in raw_items:
         try:
             findings.append(
                 Finding(
@@ -88,14 +53,77 @@ def audit_with_gemini(
             )
         except (ValueError, KeyError, AttributeError):
             continue
-    return LLMResult(findings)
+    return findings
 
 
-def build_client(cfg: dict):
-    provider = cfg.get("llm", {}).get("provider", "gemini")
-    if provider != "gemini":
-        return None
-    return audit_with_gemini
+def _files_blob(payload: list[dict]) -> str:
+    return "\n\n".join(f"### FILE: {f['path']}\n```\n{f['content']}\n```" for f in payload)
+
+
+def _post(url: str, body: dict, headers: dict, timeout: int) -> dict:
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", **headers},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read())
+
+
+def _audit_gemini(prompt: str, payload: list[dict], cfg: dict) -> LLMResult:
+    key = os.environ.get("GUARDDOG_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    if not key:
+        return LLMResult([], skipped_reason="no GUARDDOG_API_KEY/GEMINI_API_KEY set")
+    model = cfg.get("model", "gemini-2.0-flash")
+    body = {
+        "system_instruction": {"parts": [{"text": prompt}]},
+        "contents": [{"parts": [{"text": _files_blob(payload)}]}],
+        "generationConfig": {"response_mime_type": "application/json"},
+    }
+    try:
+        data = _post(
+            f"{GEMINI_URL.format(model=model)}?key={key}", body, {}, int(cfg.get("timeout_sec", 60))
+        )
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception as exc:
+        return LLMResult([], skipped_reason=f"gemini request failed: {exc}")
+    return LLMResult(_to_findings(_extract_findings(text)))
+
+
+def _audit_openai(prompt: str, payload: list[dict], cfg: dict) -> LLMResult:
+    key = os.environ.get("GUARDDOG_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    if not key:
+        return LLMResult([], skipped_reason="no GUARDDOG_API_KEY/OPENAI_API_KEY set")
+    base = cfg.get("base_url", OPENAI_URL)
+    body = {
+        "model": cfg.get("model", "gpt-4o-mini"),
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": _files_blob(payload)},
+        ],
+    }
+    try:
+        data = _post(
+            base, body, {"Authorization": f"Bearer {key}"}, int(cfg.get("timeout_sec", 60))
+        )
+        text = data["choices"][0]["message"]["content"]
+    except Exception as exc:
+        return LLMResult([], skipped_reason=f"openai request failed: {exc}")
+    return LLMResult(_to_findings(_extract_findings(text)))
+
+
+PROVIDERS = {"gemini": _audit_gemini, "openai": _audit_openai}
+
+
+def audit(prompt: str, payload: list[dict], cfg: dict) -> LLMResult:
+    if not payload:
+        return LLMResult([], skipped_reason="no changed files (cache hit)")
+    provider = str(cfg.get("provider", "gemini")).lower()
+    fn = PROVIDERS.get(provider)
+    if fn is None:
+        return LLMResult([], skipped_reason=f"unknown provider: {provider}")
+    return fn(prompt, payload, cfg)
 
 
 def load_system_prompt(templates_dir: Path) -> str:

@@ -1,17 +1,19 @@
 {
   "ignore_dirs": [
     ".git", ".devin", "agents-workflow", "node_modules", "venv", ".venv",
-    "__pycache__", ".pytest_cache", ".ruff_cache", "dist", "build",
-    ".idea", ".vscode", "*.egg-info"
+    "__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache", "dist",
+    "build", ".idea", ".vscode", "coverage", "htmlcov", "*.egg-info"
   ],
   "ignore_files": [
-    "*.lock", "*.min.js", "*.min.css", ".guarddog_cache.json",
-    "guarddog_report.*", "package-lock.json", "poetry.lock"
+    "*.lock", "*.min.js", "*.min.css", "*.map", "*.pyc",
+    ".guarddog_cache.json", "guarddog_report.*", "package-lock.json",
+    "poetry.lock", "Pipfile.lock", "yarn.lock", "pnpm-lock.yaml"
   ],
   "scan_extensions": [
-    ".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".java", ".rb", ".php",
-    ".yaml", ".yml", ".toml", ".env", ".sh", ".bat", ".ps1", ".cfg",
-    ".ini", ".sql", ".Dockerfile", ".dockerfile"
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".java", ".rb", ".php",
+    ".yaml", ".yml", ".toml", ".env", ".sh", ".bash", ".bat", ".ps1",
+    ".cfg", ".ini", ".sql", ".conf", ".tf", ".hcl",
+    "dockerfile", ".dockerfile"
   ],
   "max_file_size_kb": 256,
   "fail_on": "critical",
@@ -19,6 +21,7 @@
     "enabled": true,
     "provider": "gemini",
     "model": "gemini-2.0-flash",
-    "max_files": 40
+    "max_files": 40,
+    "timeout_sec": 60
   }
 }

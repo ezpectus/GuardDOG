@@ -34,17 +34,19 @@ QUESTIONS protocol. Below: this role's specifics only.
 
 | Surface | Что там | Размер (2026-10-10, `wc -l`) |
 |---|---|---|
-| `main.py` | CLI entry, оркестрация слоёв | 122 LOC |
-| `report.py` | MD/JSON рендер + exit gate | 68 LOC |
-| `parsers/` | walker + findings + regex + ast | 5 files, 362 LOC |
-| `llm_client/` | context (SHA-256 cache) + Gemini REST client | 3 files, 160 LOC |
-| `tests/` | pytest suite | 1 file, 8 tests (`pytest --collect-only`), 83 LOC |
-| `templates/` | system prompt для LLM | 1 file, 28 LOC |
-| `config.json` | правила игнора, лимиты, fail_on | 24 строки |
+| `main.py` | thin entry → cli | 10 LOC |
+| `cli.py` | сабкоманды scan/install-hook/rules/cache | 183 LOC |
+| `config.py` | config-слои (config.json→.guarddog.json→--config) | 69 LOC |
+| `report.py` | MD/JSON/HTML рендеры + gate | 113 LOC |
+| `parsers/` | findings + rules + regex + ast + walker | 6 files, 500 LOC |
+| `llm_client/` | context (SHA-256 cache+priority) + клиенты gemini/openai | 3 files, 213 LOC |
+| `tests/` | pytest suite | 3 files, 25 tests (`pytest --collect-only`), 258 LOC |
+| `templates/` | system_prompt.md + report.html | 2 files, 70 LOC |
+| `config.json` | authority-дефолты | 27 строк |
 | `.devin/` | workflow-система | — |
 
-Правил regex: 11 (метод: `len(RULES)` в `regex_scanner.py`).
-Правил AST: 6 (метод: счёт веток `_check_node` в `ast_scanner.py`).
+Правил regex: 17 (метод: `len(RULES)` в `parsers/rules.py`).
+Проверок AST: ~15 (метод: счёт веток `_check_node`/`_check_call`).
 
 Board convention: findings are `S###` rows, one global sequence
 (next: max existing + 1 — search **both** `BOARD.md` and `done-log.md`,

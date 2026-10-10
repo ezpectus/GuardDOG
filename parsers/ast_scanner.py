@@ -1,4 +1,9 @@
-"""AST layer: semantic checks for Python files (stdlib ast only)."""
+"""AST layer: semantic checks for Python files (stdlib ast only).
+
+Each check produces the same rule_ids as the ast_covered regex rules, so a
+.py file is never double-reported. AST-only extras: silent-except,
+star-import, long-function, assert-in-prod, insecure-tempfile.
+"""
 
 from __future__ import annotations
 
@@ -7,29 +12,14 @@ import re
 from pathlib import Path
 
 from .findings import Finding, Severity
+from .regex_scanner import suppressed
 
-SECRET_NAME = re.compile(r"password|passwd|pwd|secret|api_?key|token|private_?key", re.I)
+SECRET_NAME = re.compile(
+    r"password|passwd|pwd|secret|api_?key|token|private_?key|client_?secret",
+    re.I,
+)
 MAX_FUNC_LINES = 50
-
-
-def _is_secret_str_assign(node: ast.AST) -> tuple[int, str] | None:
-    if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-        return None
-    value = node.value if isinstance(node, ast.AnnAssign) else node.value
-    if not (
-        isinstance(value, ast.Constant) and isinstance(value.value, str) and len(value.value) >= 4
-    ):
-        return None
-    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-    for t in targets:
-        name = ""
-        if isinstance(t, ast.Name):
-            name = t.id
-        elif isinstance(t, ast.Attribute):
-            name = t.attr
-        if name and SECRET_NAME.search(name):
-            return node.lineno, name
-    return None
+TEST_PATH = re.compile(r"(^|/)(tests?|testing|conftest)(/|$)|_test\.py$|test_.*\.py$")
 
 
 def _call_name(node: ast.Call) -> str:
@@ -37,16 +27,82 @@ def _call_name(node: ast.Call) -> str:
     if isinstance(f, ast.Name):
         return f.id
     if isinstance(f, ast.Attribute):
-        return f.attr
+        base = f.value.id if isinstance(f.value, ast.Name) else ""
+        return f"{base}.{f.attr}" if base else f.attr
     return ""
 
 
-def _check_node(node: ast.AST, rel: str, lines: list[str]) -> list[Finding]:
-    findings: list[Finding] = []
-    hit = _is_secret_str_assign(node)
+def _kw_true(node: ast.Call, name: str) -> bool:
+    return any(
+        kw.arg == name and isinstance(kw.value, ast.Constant) and kw.value.value is True
+        for kw in node.keywords
+    )
+
+
+def _kw_false(node: ast.Call, name: str) -> bool:
+    return any(
+        kw.arg == name and isinstance(kw.value, ast.Constant) and kw.value.value is False
+        for kw in node.keywords
+    )
+
+
+def _secret_assign(node: ast.AST) -> tuple[int, str] | None:
+    if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+        return None
+    value = node.value
+    if not (
+        isinstance(value, ast.Constant) and isinstance(value.value, str) and len(value.value) >= 4
+    ):
+        return None
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    for t in targets:
+        name = t.id if isinstance(t, ast.Name) else t.attr if isinstance(t, ast.Attribute) else ""
+        if name and SECRET_NAME.search(name):
+            return node.lineno, name
+    return None
+
+
+def _check_call(node: ast.Call, rel: str, lines: list[str]) -> list[Finding]:
+    name = _call_name(node)
+    line = node.lineno
+    snip = lines[line - 1].strip()[:160]
+
+    def f(rule_id: str, sev: Severity, msg: str) -> Finding:
+        return Finding(rule_id, sev, rel, line, msg, snip)
+
+    if name in ("eval", "exec"):
+        return [f("eval-exec", Severity.HIGH, f"{name}() on dynamic input")]
+    if name == "print":
+        for arg in node.args:
+            if isinstance(arg, ast.Name) and SECRET_NAME.search(arg.id):
+                return [f("print-secret", Severity.CRITICAL, f"print() leaks `{arg.id}`")]
+        return []
+    if name == "os.system":
+        return [f("os-system", Severity.HIGH, "os.system() — shell injection surface")]
+    if name.startswith(("subprocess.", "os.popen")) and _kw_true(node, "shell"):
+        return [f("shell-true", Severity.HIGH, "subprocess invoked with shell enabled")]
+    if _kw_false(node, "verify"):
+        return [f("verify-false", Severity.HIGH, "TLS certificate verification disabled")]
+    if name == "pickle.loads" or name == "pickle.load":
+        return [f("pickle-load", Severity.HIGH, "pickle deserialization of untrusted data risk")]
+    if name == "yaml.load" and not any(kw.arg == "Loader" for kw in node.keywords):
+        return [f("yaml-load-unsafe", Severity.HIGH, "yaml.load without SafeLoader")]
+    if name in ("hashlib.md5", "hashlib.sha1"):
+        return [f("weak-hash", Severity.MEDIUM, f"{name}() — weak hash for security use")]
+    if name == "tempfile.mktemp":
+        return [
+            f("insecure-tempfile", Severity.MEDIUM, "mktemp is racy — use mkstemp/TemporaryFile")
+        ]
+    if _kw_true(node, "debug"):
+        return [f("debug-enabled", Severity.MEDIUM, "debug mode enabled in call")]
+    return []
+
+
+def _check_node(node: ast.AST, rel: str, lines: list[str], is_test: bool) -> list[Finding]:
+    hit = _secret_assign(node)
     if hit:
         lineno, name = hit
-        findings.append(
+        return [
             Finding(
                 "hardcoded-secret",
                 Severity.CRITICAL,
@@ -55,79 +111,56 @@ def _check_node(node: ast.AST, rel: str, lines: list[str]) -> list[Finding]:
                 f"hardcoded credential assigned to `{name}`",
                 lines[lineno - 1].strip()[:160],
             )
-        )
-        return findings
+        ]
 
     if isinstance(node, ast.Call):
-        name = _call_name(node)
-        if name in ("eval", "exec"):
-            findings.append(
-                Finding(
-                    "eval-exec",
-                    Severity.HIGH,
-                    rel,
-                    node.lineno,
-                    f"{name}() on dynamic input",
-                    lines[node.lineno - 1].strip()[:160],
-                )
-            )
-        elif name == "print":
-            for arg in node.args:
-                if isinstance(arg, ast.Name) and SECRET_NAME.search(arg.id):
-                    findings.append(
-                        Finding(
-                            "print-secret",
-                            Severity.CRITICAL,
-                            rel,
-                            node.lineno,
-                            f"print() leaks `{arg.id}`",
-                            lines[node.lineno - 1].strip()[:160],
-                        )
-                    )
-                    break
+        return _check_call(node, rel, lines)
+    return _check_misc(node, rel, lines, is_test)
+
+
+def _check_misc(node: ast.AST, rel: str, lines: list[str], is_test: bool) -> list[Finding]:
+    def f(rule_id: str, sev: Severity, line: int, msg: str) -> Finding:
+        return Finding(rule_id, sev, rel, line, msg, lines[line - 1].strip()[:160])
 
     if (
         isinstance(node, ast.ExceptHandler)
         and len(node.body) == 1
         and isinstance(node.body[0], (ast.Pass, ast.Expr))
     ):
-        findings.append(
-            Finding(
+        return [
+            f(
                 "silent-except",
                 Severity.MEDIUM,
-                rel,
                 node.lineno,
                 "exception swallowed (pass/ellipsis body)",
-                lines[node.lineno - 1].strip()[:160],
             )
-        )
+        ]
 
     if isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names):
-        findings.append(
-            Finding(
-                "star-import",
+        return [f("star-import", Severity.LOW, node.lineno, f"from {node.module or '?'} import *")]
+
+    if isinstance(node, ast.Assert) and not is_test:
+        return [
+            f(
+                "assert-in-prod",
                 Severity.LOW,
-                rel,
                 node.lineno,
-                f"from {node.module or '?'} import *",
-                lines[node.lineno - 1].strip()[:160],
+                "assert in non-test code — stripped under python -O",
             )
-        )
+        ]
 
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         length = (node.end_lineno or node.lineno) - node.lineno + 1
         if length > MAX_FUNC_LINES:
-            findings.append(
-                Finding(
+            return [
+                f(
                     "long-function",
                     Severity.LOW,
-                    rel,
                     node.lineno,
                     f"function `{node.name}` is {length} lines (limit {MAX_FUNC_LINES})",
-                    node.name,
                 )
-            )
-    return findings
+            ]
+    return []
 
 
 def scan_ast(path: Path, rel: str, text: str) -> list[Finding]:
@@ -136,7 +169,8 @@ def scan_ast(path: Path, rel: str, text: str) -> list[Finding]:
     except SyntaxError:
         return []
     lines = text.splitlines()
+    is_test = bool(TEST_PATH.search(rel.replace("\\", "/")))
     findings: list[Finding] = []
     for node in ast.walk(tree):
-        findings.extend(_check_node(node, rel, lines))
-    return findings
+        findings.extend(_check_node(node, rel, lines, is_test))
+    return [f for f in findings if not suppressed(lines[f.line - 1], f.rule_id)]

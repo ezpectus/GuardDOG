@@ -1,12 +1,37 @@
+# Python
 __pycache__/
-*.pyc
-.pytest_cache/
-.ruff_cache/
+*.py[cod]
+*$py.class
 *.egg-info/
+.eggs/
 dist/
 build/
+pip-wheel-metadata/
+
+# Virtual envs
 venv/
 .venv/
+env/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+coverage/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# GuardDOG runtime artifacts
 .guarddog_cache.json
 guarddog_report.*
+.guarddog_report.md
+
+# Secrets — never commit real env files
 .env
+.env.*
+!.env.example

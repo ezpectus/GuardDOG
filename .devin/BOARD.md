@@ -18,9 +18,10 @@
 
 ## Session state — continue from here
 
-> Kit adopted 2026-10-10: MVP-скелет сканера на месте (walker + regex +
-> AST + LLM-client stub + report + gate), 8 тестов зелёные, ruff чист.
-> Следующее — PLAN A1/A2.
+> 2026-10-10: полноценное приложение — cli.py (scan/install-hook/rules/
+> cache), 17 regex + ~15 AST правил, HTML-дашборд, config-слои
+> (config.json → .guarddog.json → --config), LLM: gemini+openai-compat.
+> A1/A2/B2/B3 done. Открыто: B1 (живой LLM-прогон), B4, B5.
 
 ## Open findings
 

@@ -1,0 +1,69 @@
+"""Config loading: config.json is the authority; .guarddog.json in the
+scanned target and --config override it (deep-merge: dicts merge, lists
+append-unique, scalars replace). Inline .get() fallbacks keep the scanner
+sane if config.json is deleted.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+
+SCANNER_ROOT = Path(__file__).resolve().parent
+TARGET_CONFIG_NAME = ".guarddog.json"
+
+
+@dataclass
+class Config:
+    data: dict = field(default_factory=dict)
+
+    @property
+    def ignore_dirs(self) -> set[str]:
+        return set(self.data.get("ignore_dirs", []))
+
+    @property
+    def ignore_files(self) -> set[str]:
+        return set(self.data.get("ignore_files", []))
+
+    @property
+    def scan_extensions(self) -> set[str]:
+        return {e.lower() for e in self.data.get("scan_extensions", [])}
+
+    @property
+    def max_file_size_kb(self) -> int:
+        return int(self.data.get("max_file_size_kb", 256))
+
+    @property
+    def fail_on(self) -> str:
+        return str(self.data.get("fail_on", "critical"))
+
+    @property
+    def llm(self) -> dict:
+        return dict(self.data.get("llm", {}))
+
+
+def _merge(base: dict, override: dict) -> dict:
+    out = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _merge(out[key], value)
+        elif isinstance(value, list) and isinstance(out.get(key), list):
+            out[key] = out[key] + [v for v in value if v not in out[key]]
+        else:
+            out[key] = value
+    return out
+
+
+def load(target: Path | None = None, explicit: Path | None = None) -> Config:
+    data: dict = {}
+    default_file = SCANNER_ROOT / "config.json"
+    if default_file.is_file():
+        data = _merge(data, json.loads(default_file.read_text(encoding="utf-8")))
+    if target is not None:
+        target_file = target / TARGET_CONFIG_NAME
+        if target_file.is_file():
+            data = _merge(data, json.loads(target_file.read_text(encoding="utf-8")))
+    if explicit is not None and explicit.is_file():
+        data = _merge(data, json.loads(explicit.read_text(encoding="utf-8")))
+    return Config(data)
