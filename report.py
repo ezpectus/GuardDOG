@@ -36,9 +36,16 @@ def render_markdown(result: ScanResult) -> str:
     ]
     if result.llm_note:
         out.append(f"- llm layer: {result.llm_note}")
-    out += ["", "| Sev | Rule | File:Line | Message |", "|-----|------|-----------|---------|"]
+    out += [
+        "",
+        "| Sev | Rule | File:Line | Message | Fix |",
+        "|-----|------|-----------|---------|-----|",
+    ]
     for f in _sorted(result):
-        out.append(f"| {f.severity.name} | `{f.rule_id}` | `{f.file}:{f.line}` | {f.message} |")
+        out.append(
+            f"| {f.severity.name} | `{f.rule_id}` | `{f.file}:{f.line}` "
+            f"| {f.message} | {f.recommendation} |"
+        )
     out.append("")
     return "\n".join(out)
 
@@ -60,6 +67,7 @@ def render_json(result: ScanResult) -> str:
                     "message": f.message,
                     "snippet": f.snippet,
                     "source": f.source,
+                    "recommendation": f.recommendation,
                 }
                 for f in result.findings
             ],
@@ -79,12 +87,13 @@ def render_html(result: ScanResult, template_path: Path) -> str:
             if f.snippet
             else ""
         )
+        fix = f'<div class="fix">{html.escape(f.recommendation)}</div>' if f.recommendation else ""
         rows.append(
             "<tr>"
             f'<td><span class="sev" style="background:{color}">{f.severity.name}</span></td>'
             f"<td><code>{html.escape(f.rule_id)}</code></td>"
             f"<td><code>{html.escape(f.file)}:{f.line}</code></td>"
-            f"<td>{html.escape(f.message)}{detail}</td>"
+            f"<td>{html.escape(f.message)}{detail}{fix}</td>"
             f"<td>{html.escape(f.source)}</td>"
             "</tr>"
         )

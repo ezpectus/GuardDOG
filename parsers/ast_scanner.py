@@ -8,11 +8,13 @@ star-import, long-function, assert-in-prod, insecure-tempfile.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import re
 from pathlib import Path
 
 from .findings import Finding, Severity
 from .regex_scanner import suppressed
+from .rules import HINTS
 
 SECRET_NAME = re.compile(
     r"password|passwd|pwd|secret|api_?key|token|private_?key|client_?secret",
@@ -173,4 +175,5 @@ def scan_ast(path: Path, rel: str, text: str) -> list[Finding]:
     findings: list[Finding] = []
     for node in ast.walk(tree):
         findings.extend(_check_node(node, rel, lines, is_test))
-    return [f for f in findings if not suppressed(lines[f.line - 1], f.rule_id)]
+    kept = [f for f in findings if not suppressed(lines[f.line - 1], f.rule_id)]
+    return [dataclasses.replace(f, recommendation=HINTS.get(f.rule_id, "")) for f in kept]

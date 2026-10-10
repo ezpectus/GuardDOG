@@ -11,6 +11,7 @@ Bare `guarddog <path>` is shorthand for `guarddog scan <path>`.
 from __future__ import annotations
 
 import argparse
+import os
 import stat
 import sys
 from pathlib import Path
@@ -68,6 +69,10 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("cache", help="inspect/clear LLM context cache")
     c.add_argument("target", nargs="?", default=".")
     c.add_argument("--clear", action="store_true")
+
+    k = sub.add_parser("check", help="dry-run: what would be scanned, LLM payload estimate")
+    k.add_argument("target", nargs="?", default=".")
+    k.add_argument("--config", type=Path, default=None)
     return p
 
 
@@ -119,6 +124,31 @@ def _local_scan(
     return result, files
 
 
+def _threat_model(target: Path, cfg: cfgmod.Config) -> str:
+    """Project-provided threat model — calibrates LLM severity (oss-scanner idea).
+
+    Sources in priority order: cfg llm.threat_model path, then conventional
+    locations inside the scanned repo.
+    """
+    explicit = cfg.llm.get("threat_model")
+    candidates = (
+        [target / explicit]
+        if explicit
+        else [
+            target / "threat_model.md",
+            target / "THREAT_MODEL.md",
+            target / ".guarddog" / "threat_model.md",
+        ]
+    )
+    for path in candidates:
+        if path.is_file():
+            try:
+                return path.read_text(encoding="utf-8", errors="replace")[:8000]
+            except OSError:
+                continue
+    return ""
+
+
 def _llm_scan(target: Path, files: list[Path], cfg: cfgmod.Config, result: ScanResult) -> str:
     llm_cfg = cfg.llm
     if not llm_cfg.get("enabled", True):
@@ -130,6 +160,12 @@ def _llm_scan(target: Path, files: list[Path], cfg: cfgmod.Config, result: ScanR
         target, files, max_files=int(llm_cfg.get("max_files", 40))
     )
     prompt = load_system_prompt(SCANNER_ROOT / "templates")
+    threat = _threat_model(target, cfg)
+    if threat:
+        prompt += (
+            "\n\n## PROJECT THREAT MODEL — calibrate severity and scope "
+            "per this document\n\n" + threat
+        )
     res = audit(prompt, payload, llm_cfg)
     if res.skipped_reason is None:
         save_cache(target, new_cache)  # commit cache only on real response
@@ -192,6 +228,47 @@ def cmd_rules() -> int:
     return 0
 
 
+def cmd_check(args: argparse.Namespace) -> int:
+    """Dry-run: shows what a scan would touch — files, LLM payload, token est."""
+    target = Path(args.target).resolve()
+    if not target.is_dir():
+        print(f"guarddog: target not found: {target}", file=sys.stderr)
+        return 2
+    cfg = cfgmod.load(target=target, explicit=args.config)
+    files = list(
+        iter_source_files(
+            target,
+            extensions=cfg.scan_extensions,
+            ignore_dirs=cfg.ignore_dirs,
+            ignore_files=cfg.ignore_files,
+            max_size_kb=cfg.max_file_size_kb,
+        )
+    )
+    print(f"target:        {target}")
+    print(f"files scanned: {len(files)}")
+    threat = _threat_model(target, cfg)
+    print(f"threat model:  {'found' if threat else 'none'}")
+    llm_cfg = cfg.llm
+    if not llm_cfg.get("enabled", True):
+        print("llm:           disabled in config")
+        return 0
+    from llm_client.context import build_llm_context
+
+    payload, unchanged, _ = build_llm_context(
+        target, files, max_files=int(llm_cfg.get("max_files", 40))
+    )
+    chars = sum(len(p["content"]) for p in payload)
+    key = (
+        "set"
+        if os.environ.get("GUARDDOG_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        else "not set"
+    )
+    print(f"llm provider:  {llm_cfg.get('provider', 'gemini')} (api key {key})")
+    print(f"llm payload:   {len(payload)} changed, {len(unchanged)} cached")
+    print(f"llm size:      {chars} chars (~{chars // 4} tokens est.)")
+    return 0
+
+
 def cmd_cache(args: argparse.Namespace) -> int:
     from llm_client.context import clear_cache, load_cache
 
@@ -206,7 +283,7 @@ def cmd_cache(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    cmds = {"scan", "install-hook", "rules", "cache"}
+    cmds = {"scan", "install-hook", "rules", "cache", "check"}
     # `guarddog <path>` and `guarddog --flags` both mean `guarddog scan …`;
     # only -h/--help stays at the top level to list subcommands.
     if not argv or (argv[0] not in cmds and argv[0] not in ("-h", "--help")):
@@ -219,4 +296,6 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_rules()
     if args.cmd == "cache":
         return cmd_cache(args)
+    if args.cmd == "check":
+        return cmd_check(args)
     return cmd_scan(args)

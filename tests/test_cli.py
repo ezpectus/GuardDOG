@@ -125,6 +125,57 @@ def test_unknown_config_key_warns(tmp_path, capsys):
     assert "ignore_dirz" in capsys.readouterr().err
 
 
+def test_check_command_reports_scan_plan(tmp_path, capsys):
+    _plant(tmp_path)
+    assert cli.main(["check", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "files scanned:" in out and "llm payload:" in out
+    assert "threat model:  none" in out
+
+
+def test_threat_model_reaches_llm_prompt(tmp_path, monkeypatch):
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "threat_model.md").write_text(
+        "post-auth SQLi = HIGH, never CRITICAL", encoding="utf-8"
+    )
+    captured = {}
+
+    def fake_audit(prompt, payload, cfg):
+        captured["prompt"] = prompt
+        from llm_client.client import LLMResult
+
+        return LLMResult([], skipped_reason="captured")
+
+    monkeypatch.setattr("llm_client.client.audit", fake_audit)
+    cli.main(["scan", str(tmp_path), "--quiet"])
+    assert "post-auth SQLi" in captured["prompt"]
+
+
+def test_llm_fix_field_parsed():
+    from llm_client.client import _to_findings
+
+    findings = _to_findings(
+        [
+            {
+                "rule_id": "x",
+                "severity": "high",
+                "file": "a.py",
+                "line": 1,
+                "message": "m",
+                "fix": "rotate the key",
+            }
+        ]
+    )
+    assert findings[0].recommendation == "rotate the key"
+
+
+def test_report_has_fix_column(tmp_path):
+    _plant(tmp_path)
+    cli.main(["scan", str(tmp_path), "--no-llm", "--quiet"])
+    text = (tmp_path / "guarddog_report.md").read_text(encoding="utf-8")
+    assert "| Fix |" in text and "secrets manager" in text
+
+
 @pytest.mark.skipif(not shutil.which("git"), reason="git not installed")
 def test_staged_mode_scans_only_staged(tmp_path):
     import subprocess

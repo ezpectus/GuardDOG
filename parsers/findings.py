@@ -27,6 +27,7 @@ class Finding:
     message: str
     snippet: str = ""
     source: str = "local"
+    recommendation: str = ""
 
 
 @dataclass

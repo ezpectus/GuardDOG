@@ -52,6 +52,7 @@ def _to_findings(raw_items: list[dict]) -> list[Finding]:
                     message=str(raw.get("message", "llm finding")),
                     snippet=str(raw.get("snippet", ""))[:160],
                     source="llm",
+                    recommendation=str(raw.get("fix", raw.get("recommendation", "")))[:300],
                 )
             )
         except (ValueError, KeyError, AttributeError):

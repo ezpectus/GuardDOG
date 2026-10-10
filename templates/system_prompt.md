@@ -17,7 +17,8 @@ Respond with STRICT JSON only — no prose, no markdown fences:
       "file": "path/from/payload",
       "line": 0,
       "message": "one line: what is wrong and why it matters",
-      "snippet": "the offending code, max 160 chars"
+      "snippet": "the offending code, max 160 chars",
+      "fix": "one line: concrete remediation — what to change"
     }
   ]
 }
@@ -26,5 +27,7 @@ Rules:
 - Report only what you can point at — a file and a line. No speculation.
 - Severity: critical = exploitable now (secrets, injection, auth bypass);
   high = dangerous default; medium = hardening gap; low = hygiene.
+- If the payload includes a PROJECT THREAT MODEL section, its severity
+  calibration overrides the defaults above.
 - Prefer silence over noise. An empty findings array is a valid answer.
 - Do not flag test fixtures that are clearly marked as fixtures.

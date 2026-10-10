@@ -146,3 +146,30 @@ RULES: list[Rule] = [
 
 
 AST_RULE_IDS = {r.rule_id for r in RULES if r.ast_covered}
+
+# One-line remediation per rule — surfaces in reports as the "Fix" column.
+# Includes AST-only ids that never appear in RULES.
+HINTS: dict[str, str] = {
+    "hardcoded-secret": "move to env var / secrets manager; rotate the leaked value",
+    "private-key-block": "remove from repo, rotate the key, load from a secrets store",
+    "cloud-key": "revoke now — the format is recognizable, treat it as leaked",
+    "print-secret": "log metadata, never the secret; redact before printing",
+    "eval-exec": "explicit dispatch or ast.literal_eval for data literals",
+    "shell-true": "pass an argv list and keep shell=False (the default)",
+    "verify-false": "keep TLS verification on; pin a CA bundle if needed",
+    "pickle-load": "use json/msgspec; pickle only same-origin trusted data",
+    "yaml-load-unsafe": "yaml.safe_load() or yaml.load(..., Loader=SafeLoader)",
+    "os-system": "subprocess.run([...], shell=False)",
+    "sql-format-exec": "parameterized queries: execute(sql, params)",
+    "debug-enabled": "gate behind an env flag; never ship debug=True",
+    "bind-all-interfaces": "bind 127.0.0.1 or a named iface unless public by design",
+    "weak-hash": "sha256+ / bcrypt / argon2 for security; md5 only for checksums",
+    "cors-wildcard": "whitelist origins — '*' with credentials leaks sessions",
+    "todo-leftover": "resolve it or file a ticket — stale TODOs hide work",
+    "commented-code": "delete it — git remembers",
+    "silent-except": "catch specific exceptions; log or re-raise",
+    "star-import": "explicit imports — namespace stays readable",
+    "assert-in-prod": "raise/return errors — asserts vanish under python -O",
+    "long-function": "split at seams; >50 lines hides bugs",
+    "insecure-tempfile": "tempfile.mkstemp()/TemporaryFile — mktemp is racy",
+}

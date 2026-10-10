@@ -151,10 +151,24 @@ python main.py scan . --format html -o report.html
 # install a pre-commit hook into a target repo
 python main.py install-hook /path/to/project --fail-on high
 
+# dry-run: file count + LLM payload/token estimate before spending
+python main.py check /path/to/project
+
 # list rules / manage the LLM cache
 python main.py rules
 python main.py cache /path/to/project --clear
 ```
+
+### Project threat model (optional)
+
+Drop `threat_model.md` into the scanned repo's root (or `.guarddog/threat_model.md`,
+or set `llm.threat_model` in config). GuardDOG appends it to the audit prompt so
+the LLM calibrates severity to *your* context — e.g. "post-auth SQLi is HIGH,
+never CRITICAL" — and knows where untrusted input enters. Idea borrowed from
+Anthropic's oss-scanner.
+
+Every finding carries a one-line `fix` recommendation — local rules ship with
+built-in hints, LLM findings are asked for one in the response schema.
 
 `guarddog <path>` without a subcommand is shorthand for `guarddog scan <path>`.
 
@@ -303,6 +317,9 @@ Three layers, later wins (dicts merge, lists append-unique, scalars replace):
       cache, key-file priority, strict-JSON parsing
 - [x] Per-target config (`.guarddog.json`), inline suppression comments
 - [x] Pre-commit hook installer (`install-hook`)
+- [x] Per-project `threat_model.md` + fix recommendations on every finding
+      (severity calibration and remediation — borrowed from oss-scanner)
+- [x] `check` dry-run: what would be scanned, payload size, token estimate
 - [ ] Live LLM run against a real key + JSON-schema validation with retry
 - [ ] AST rules for JS/TS (tree-sitter)
 - [ ] Go rewrite → single binary, when Python hits the wall

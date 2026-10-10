@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .findings import Finding
-from .rules import RULES
+from .rules import HINTS, RULES
 
 SUPPRESS_MARK = "guarddog: ignore"
 
@@ -37,6 +37,7 @@ def scan_regex(path: Path, rel: str, text: str) -> list[Finding]:
                         line=lineno,
                         message=rule.message,
                         snippet=line.strip()[:160],
+                        recommendation=HINTS.get(rule.rule_id, ""),
                     )
                 )
     return findings
