@@ -102,6 +102,8 @@ def render_html(result: ScanResult, template_path: Path) -> str:
         f'<div class="num">{counts[s.name]}</div><div class="lbl">{s.name}</div></div>'
         for s in SEV_ORDER
     )
+    if not template_path.is_file():
+        return render_markdown(result)
     tpl = Template(template_path.read_text(encoding="utf-8"))
     return tpl.safe_substitute(
         target=html.escape(result.target),

@@ -19,7 +19,10 @@ guarddog = "cli:main"
 
 [tool.setuptools]
 py-modules = ["main", "cli", "config", "report"]
-packages = ["parsers", "llm_client"]
+packages = ["parsers", "llm_client", "templates"]
+
+[tool.setuptools.package-data]
+templates = ["*.html", "*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
